@@ -1,0 +1,9 @@
+{
+  "name": "tiny-games",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Ultra-small monochrome mini-games with admin console and IP tracking",
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}
