@@ -16,6 +16,80 @@ const consoleLogs = [];
 const sseClients = new Set();
 const recentVisitors = [];
 const visitorStats = new Map(); // ip -> { count, firstSeen, lastSeen }
+const ipEvents = new Map(); // ip -> Array<{ id, time, type, source, message }>
+const geoCache = new Map(); // ip -> Geolocation & Bot Risk Data
+
+function recordIpEvent(ip, entry) {
+  if (!ip) return;
+  let list = ipEvents.get(ip);
+  if (!list) {
+    list = [];
+    ipEvents.set(ip, list);
+  }
+  list.unshift(entry);
+  if (list.length > 100) list.pop();
+}
+
+// Fetch Geolocation & Bot Risk for an IP
+async function getIpGeo(ip) {
+  if (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
+    return {
+      country: 'LOCAL',
+      countryCode: 'LOC',
+      region: 'INTERNAL',
+      city: 'LOCALHOST',
+      isp: 'LOOPBACK INTERFACE',
+      isBotOrProxy: false,
+      hosting: false,
+      proxy: false,
+      status: 'success'
+    };
+  }
+
+  if (geoCache.has(ip)) {
+    return geoCache.get(ip);
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2500);
+    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,message,country,countryCode,regionName,city,isp,org,as,proxy,hosting`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    const data = await res.json();
+    if (data && data.status === 'success') {
+      const geoInfo = {
+        country: data.country || 'UNKNOWN',
+        countryCode: data.countryCode || '??',
+        region: data.regionName || 'UNKNOWN',
+        city: data.city || 'UNKNOWN',
+        isp: data.isp || data.org || 'UNKNOWN',
+        isBotOrProxy: Boolean(data.proxy || data.hosting),
+        hosting: Boolean(data.hosting),
+        proxy: Boolean(data.proxy),
+        status: 'success'
+      };
+      geoCache.set(ip, geoInfo);
+      return geoInfo;
+    }
+  } catch {
+    // Fallback on timeout or network error
+  }
+
+  const fallback = {
+    country: 'UNKNOWN',
+    countryCode: '??',
+    region: 'UNKNOWN',
+    city: 'UNKNOWN',
+    isp: 'UNKNOWN',
+    isBotOrProxy: false,
+    hosting: false,
+    proxy: false,
+    status: 'fail'
+  };
+  return fallback;
+}
 
 // Helper: Normalize and extract Public IP address
 function getClientIp(req) {
@@ -114,6 +188,15 @@ function recordVisitor(req, overrideIp = null) {
   recentVisitors.unshift(visitorEntry);
   if (recentVisitors.length > MAX_VISITORS) recentVisitors.pop();
 
+  // Record HTTP request in IP events timeline
+  recordIpEvent(ip, {
+    id: visitorEntry.id,
+    time: now,
+    type: 'HTTP',
+    source: 'PAGE',
+    message: `${method} ${reqPath}`
+  });
+
   return visitorEntry;
 }
 
@@ -127,7 +210,7 @@ const MIME_TYPES = {
 };
 
 // HTTP Server
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = parsedUrl.pathname;
 
@@ -164,11 +247,46 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname === '/api/admin/visitors' && req.method === 'GET') {
+    const enriched = await Promise.all(recentVisitors.slice(0, 50).map(async (v) => {
+      const geo = await getIpGeo(v.ip);
+      const events = ipEvents.get(v.ip) || [];
+      return {
+        ...v,
+        location: `${geo.city !== 'UNKNOWN' ? geo.city + ', ' : ''}${geo.country}`,
+        countryCode: geo.countryCode,
+        isp: geo.isp,
+        isBotOrProxy: geo.isBotOrProxy,
+        hosting: geo.hosting,
+        proxy: geo.proxy,
+        eventCount: events.length
+      };
+    }));
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       totalUniqueIps: visitorStats.size,
       totalHits: Array.from(visitorStats.values()).reduce((sum, v) => sum + v.count, 0),
-      recent: recentVisitors
+      recent: enriched
+    }));
+    return;
+  }
+
+  if (pathname === '/api/admin/ip-details' && req.method === 'GET') {
+    const targetIp = parsedUrl.searchParams.get('ip');
+    if (!targetIp) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Missing ip query parameter' }));
+      return;
+    }
+    const geo = await getIpGeo(targetIp);
+    const stats = visitorStats.get(targetIp) || { count: 0, firstSeen: 'N/A', lastSeen: 'N/A' };
+    const events = ipEvents.get(targetIp) || [];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      ip: targetIp,
+      geo,
+      stats,
+      events
     }));
     return;
   }
@@ -184,7 +302,8 @@ const server = http.createServer((req, res) => {
   if (pathname === '/api/admin/clear-visitors' && req.method === 'POST') {
     recentVisitors.length = 0;
     visitorStats.clear();
-    console.log('[SYS] Visitor IP log cleared by admin');
+    ipEvents.clear();
+    console.log('[SYS] Visitor IP log and events cleared by admin');
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true }));
     return;
@@ -196,13 +315,16 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const data = JSON.parse(body);
+        const clientIp = data.clientIp || req.headers['x-client-ip'] || getClientIp(req);
         const entry = {
           id: Date.now() + Math.random().toString(36).substr(2, 5),
           time: new Date().toISOString().replace('T', ' ').substring(0, 19),
           type: (data.type || 'LOG').toUpperCase(),
           source: (data.source || 'CLIENT').toUpperCase(),
-          message: String(data.message || '')
+          message: String(data.message || ''),
+          ip: clientIp
         };
+        recordIpEvent(clientIp, entry);
         broadcastLog(entry);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok' }));

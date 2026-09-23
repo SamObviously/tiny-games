@@ -106,10 +106,10 @@
               <thead>
                 <tr>
                   <th>IP ADDRESS</th>
-                  <th>PATH</th>
-                  <th>TIMESTAMP</th>
+                  <th>LOCATION</th>
+                  <th>BOT RISK</th>
                   <th>HITS</th>
-                  <th>CLIENT / AGENT</th>
+                  <th>ACTIONS</th>
                 </tr>
               </thead>
               <tbody id="visitor-table-body">
@@ -123,6 +123,61 @@
 
       </div>
     </section>
+
+    <!-- IP INSPECTOR MODAL -->
+    <div id="inspector-modal" class="inspector-overlay" style="display: none;">
+      <div class="inspector-window">
+        <div class="inspector-header">
+          <div>
+            <h3 style="margin-bottom:2px;">[IP INSPECTOR]</h3>
+            <span id="inspect-ip-addr" style="font-weight:bold; font-size:15px;">0.0.0.0</span>
+          </div>
+          <button id="btn-close-inspector">CLOSE [X]</button>
+        </div>
+
+        <div class="inspector-grid">
+          <div class="inspector-item">
+            <div class="lbl">LOCATION</div>
+            <div class="val" id="inspect-location">UNKNOWN</div>
+          </div>
+          <div class="inspector-item">
+            <div class="lbl">ISP / NETWORK</div>
+            <div class="val" id="inspect-isp">UNKNOWN</div>
+          </div>
+          <div class="inspector-item">
+            <div class="lbl">BOT / PROXY RISK</div>
+            <div class="val" id="inspect-risk">SCANNING...</div>
+          </div>
+          <div class="inspector-item">
+            <div class="lbl">ACTIVITY SUMMARY</div>
+            <div class="val" id="inspect-stats">0 HITS</div>
+          </div>
+        </div>
+
+        <div class="section-header" style="margin-bottom:8px;">
+          <h4>EVENT TIMELINE FOR THIS IP</h4>
+          <span id="inspect-event-count" style="font-size:11px; font-weight:bold;">0 EVENTS</span>
+        </div>
+
+        <div class="timeline-wrap">
+          <table class="ip-table">
+            <thead>
+              <tr>
+                <th>TIMESTAMP</th>
+                <th>TYPE</th>
+                <th>SOURCE</th>
+                <th>EVENT DETAILS</th>
+              </tr>
+            </thead>
+            <tbody id="inspect-events-body">
+              <tr>
+                <td colspan="4" style="text-align:center; padding:12px;">NO RECORDED EVENTS</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
 
   </main>
 

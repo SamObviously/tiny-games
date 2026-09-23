@@ -9,13 +9,17 @@ let currentView = 'games';
 let sseSource = null;
 let visitorInterval = null;
 let autoScroll = true;
+let currentClientPublicIp = null;
 
 // Remote logging function
 function logEvent(source, message, type = 'LOG') {
   fetch('/api/log', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source, message, type })
+    headers: {
+      'Content-Type': 'application/json',
+      'x-client-ip': currentClientPublicIp || ''
+    },
+    body: JSON.stringify({ source, message, type, clientIp: currentClientPublicIp })
   }).catch(() => {});
 }
 
@@ -175,17 +179,84 @@ function fetchVisitors() {
 
       data.recent.forEach(v => {
         const tr = document.createElement('tr');
+        const botBadge = v.isBotOrProxy
+          ? '<span class="badge-bot">BOT/PROXY</span>'
+          : '<span class="badge-clean">RESIDENTIAL</span>';
+
         tr.innerHTML = `
           <td><strong>${escapeHtml(v.ip)}</strong></td>
-          <td>${escapeHtml(v.path)}</td>
-          <td>${escapeHtml(v.time)}</td>
+          <td>${escapeHtml(v.location || 'UNKNOWN')}</td>
+          <td>${botBadge}</td>
           <td>${v.totalHits}</td>
-          <td title="${escapeHtml(v.userAgent)}">${escapeHtml(truncate(v.userAgent, 24))}</td>
+          <td><button class="btn-inspect" data-ip="${escapeHtml(v.ip)}">EVENTS [${v.eventCount || 0}]</button></td>
         `;
         tbody.appendChild(tr);
       });
+
+      // Bind inspect buttons
+      tbody.querySelectorAll('.btn-inspect').forEach(btn => {
+        btn.addEventListener('click', () => {
+          inspectIp(btn.dataset.ip);
+        });
+      });
     })
     .catch(() => {});
+}
+
+// IP Inspection Handler
+function inspectIp(ip) {
+  const modal = document.getElementById('inspector-modal');
+  document.getElementById('inspect-ip-addr').textContent = ip;
+  document.getElementById('inspect-location').textContent = 'FETCHING...';
+  document.getElementById('inspect-isp').textContent = 'FETCHING...';
+  document.getElementById('inspect-risk').textContent = 'ANALYZING...';
+  document.getElementById('inspect-stats').textContent = '...';
+  document.getElementById('inspect-event-count').textContent = '...';
+
+  const tbody = document.getElementById('inspect-events-body');
+  tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:12px;">LOADING TIMELINE...</td></tr>';
+  modal.style.display = 'flex';
+
+  fetch(`/api/admin/ip-details?ip=${encodeURIComponent(ip)}`)
+    .then(res => res.json())
+    .then(data => {
+      const geo = data.geo || {};
+      const stats = data.stats || {};
+      const events = data.events || [];
+
+      document.getElementById('inspect-location').textContent = `${geo.city || 'UNKNOWN'}, ${geo.region || ''} (${geo.country || 'UNKNOWN'})`;
+      document.getElementById('inspect-isp').textContent = geo.isp || 'UNKNOWN';
+
+      const riskEl = document.getElementById('inspect-risk');
+      if (geo.isBotOrProxy) {
+        riskEl.innerHTML = '<span class="badge-bot">ALERT: HOSTING / DATACENTER BOT PROXY</span>';
+      } else {
+        riskEl.innerHTML = '<span class="badge-clean">CLEAN CONSUMER / RESIDENTIAL IP</span>';
+      }
+
+      document.getElementById('inspect-stats').textContent = `${stats.count || 0} TOTAL HITS | FIRST: ${stats.firstSeen || 'N/A'}`;
+      document.getElementById('inspect-event-count').textContent = `${events.length} EVENTS RECORDED`;
+
+      tbody.innerHTML = '';
+      if (events.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:12px;">NO RECORDED EVENTS FOR THIS IP</td></tr>';
+        return;
+      }
+
+      events.forEach(ev => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>[${escapeHtml(ev.time || '')}]</td>
+          <td><strong>[${escapeHtml(ev.type || 'LOG')}]</strong></td>
+          <td>${escapeHtml(ev.source || '')}</td>
+          <td>${escapeHtml(ev.message || '')}</td>
+        `;
+        tbody.appendChild(row);
+      });
+    })
+    .catch(() => {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:12px;">ERROR RETRIEVING DATA</td></tr>';
+    });
 }
 
 // Helper: Escape HTML & Truncate
@@ -264,6 +335,11 @@ window.addEventListener('DOMContentLoaded', () => {
     fetch('/api/admin/clear-visitors', { method: 'POST' }).then(fetchVisitors);
   });
 
+  // Close inspector modal
+  document.getElementById('btn-close-inspector').addEventListener('click', () => {
+    document.getElementById('inspector-modal').style.display = 'none';
+  });
+
   // Hash-based routing check
   const initialHash = window.location.hash.replace('#', '') || 'games';
   switchView(initialHash);
@@ -281,6 +357,7 @@ function detectAndReportPublicIp() {
     .then(res => res.json())
     .then(data => {
       if (data && data.ip) {
+        currentClientPublicIp = data.ip;
         fetch('/api/visitor-ping', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
