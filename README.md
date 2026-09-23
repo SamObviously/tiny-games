@@ -9,7 +9,13 @@ Ultra-small monochrome mini-games suite with an admin console and public visitor
 
 ---
 
-## Deploying to Render (Free)
+## Deploy to Render (1-Click)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/SamObviously/tiny-games)
+
+**Direct Deploy URL**: [https://render.com/deploy?repo=https://github.com/SamObviously/tiny-games](https://render.com/deploy?repo=https://github.com/SamObviously/tiny-games)
+
+Repository: [https://github.com/SamObviously/tiny-games](https://github.com/SamObviously/tiny-games)
 
 This project includes a native `render.yaml` blueprint and zero external dependencies, making deployment to Render seamless:
 
